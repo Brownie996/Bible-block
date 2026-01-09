@@ -48,7 +48,6 @@ const App: React.FC = () => {
   const scoreEffectsRef = useRef<ScoreEffect[]>([]);
   const requestRef = useRef<number>(0);
 
-  // Helper to get consistent scaling factors and offsets
   const getScaleInfo = useCallback(() => {
     if (!canvasRef.current) return { scale: 1, offsetX: 0, offsetY: 0 };
     const rect = canvasRef.current.getBoundingClientRect();
@@ -235,6 +234,7 @@ const App: React.FC = () => {
 
     if (newCollectedIndices.size >= currentVerseText.length) {
       setGameState({ ...nextState, isRoundClearing: true });
+      // Extended to 3 seconds as per user request to provide a longer revealed moment
       setTimeout(() => {
          setGameState(prev => {
            if (!prev) return null;
@@ -246,7 +246,7 @@ const App: React.FC = () => {
            saveSession(s);
            return s;
          });
-      }, 2000);
+      }, 3000);
     } else if (checkGameOver(nextState)) {
       let finalHighScore = highScore;
       if (newScore > highScore) {
@@ -272,7 +272,6 @@ const App: React.FC = () => {
     canvas.width = rect.width * dpr;
     canvas.height = rect.height * dpr;
     
-    // Uniform Scaling Calculation
     const scale = Math.min(rect.width / LOGICAL_WIDTH, rect.height / LOGICAL_HEIGHT);
     const offsetX = (rect.width - LOGICAL_WIDTH * scale) / 2;
     const offsetY = (rect.height - LOGICAL_HEIGHT * scale) / 2;
@@ -280,22 +279,17 @@ const App: React.FC = () => {
     ctx.save();
     ctx.scale(dpr, dpr);
     ctx.clearRect(0, 0, rect.width, rect.height);
-    
-    // Move origin to the centered logic area
     ctx.translate(offsetX, offsetY);
 
-    // Backgrounds
     ctx.fillStyle = '#f8fafc'; ctx.fillRect(0, 0, LOGICAL_WIDTH * scale, GRID_SIZE * scale);
     ctx.fillStyle = '#f1f5f9'; ctx.fillRect(0, TRAY_Y_START * scale, LOGICAL_WIDTH * scale, 3.5 * scale);
     
-    // Grid Lines
     ctx.strokeStyle = '#e2e8f0'; ctx.lineWidth = 1;
     for(let i=0; i<=GRID_SIZE; i++) {
         ctx.beginPath(); ctx.moveTo(i * scale, 0); ctx.lineTo(i * scale, GRID_SIZE * scale); ctx.stroke();
         ctx.beginPath(); ctx.moveTo(0, i * scale); ctx.lineTo(LOGICAL_WIDTH * scale, i * scale); ctx.stroke();
     }
 
-    // Cells
     for (let y = 0; y < GRID_SIZE; y++) {
       for (let x = 0; x < GRID_SIZE; x++) {
         const cell = gameState.grid[y][x];
@@ -306,7 +300,6 @@ const App: React.FC = () => {
         if (cell.char) {
           const ok = cell.collected || gameState.isRoundClearing;
           if (ok) {
-            // Font size reduced from 0.7 to 0.63 for approx 2px reduction on standard cells
             ctx.fillStyle = '#0ea5e9'; ctx.font = `bold ${scale * 0.63}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
             ctx.fillText(cell.char, (x + 0.5) * scale, (y + 0.5) * scale);
           } else {
@@ -316,7 +309,6 @@ const App: React.FC = () => {
       }
     }
 
-    // Tray
     gameState.trayPieces.forEach((p, i) => {
       if (!p || gameState.activePieceIndex === i) return;
       const pos = getTrayPiecePos(i, p);
@@ -324,7 +316,6 @@ const App: React.FC = () => {
       p.shape.forEach((row, py) => row.forEach((v, px) => v && ctx.fillRect((pos.x + px) * scale + 2, (pos.y + py) * scale + 2, scale - 4, scale - 4)));
     });
 
-    // Active Piece (Dragging)
     if (gameState.activePieceIndex !== null) {
       const p = gameState.trayPieces[gameState.activePieceIndex]!;
       const pos = gameState.currentPiecePos;
@@ -340,7 +331,6 @@ const App: React.FC = () => {
       p.shape.forEach((row, py) => row.forEach((v, px) => v && ctx.strokeRect((pos.x + px) * scale + 1, (pos.y + py) * scale + 1, scale - 2, scale - 2)));
     }
 
-    // Score Effects
     scoreEffectsRef.current = scoreEffectsRef.current.filter(e => e.life > 0);
     scoreEffectsRef.current.forEach(e => {
         ctx.fillStyle = '#0ea5e9'; ctx.font = `bold ${scale * 0.45}px sans-serif`; ctx.globalAlpha = e.life; ctx.textAlign = 'center';
@@ -362,7 +352,6 @@ const App: React.FC = () => {
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return;
     
-    // Coordinate mapping with offset accounting
     const x = ((e.clientX - rect.left) - offsetX) / scale;
     const y = ((e.clientY - rect.top) - offsetY) / scale;
 
