@@ -7,21 +7,32 @@
     <title>聖經方塊 10×10</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
+        :root {
+            --sat: env(safe-area-inset-top);
+            --sab: env(safe-area-inset-bottom);
+        }
         body {
             margin: 0;
             padding: 0;
             overflow-x: hidden;
-            overflow-y: auto; /* 允許垂直捲動 */
+            overflow-y: auto;
             background-color: #ffffff;
             -webkit-touch-callout: none;
             -webkit-user-select: none;
             user-select: none;
+            height: 100%;
         }
         #root {
-            min-height: 100vh;
+            min-height: 100dvh;
             width: 100vw;
+            display: flex;
+            flex-direction: column;
         }
-        /* 隱藏捲動條但保留功能 (可選，視審美決定) */
+        canvas {
+            image-rendering: -webkit-optimize-contrast;
+            image-rendering: crisp-edges;
+        }
+        /* Hide scrollbar for clean UI but keep functionality */
         ::-webkit-scrollbar {
             width: 0px;
             background: transparent;

@@ -32,17 +32,21 @@ const MenuIcon = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M4 6h16M4 12h16m-7 6h7" /></svg>
 );
 const PlayIcon = () => (
-  <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" /></svg>
+  <svg className="w-8 h-8" fill="currentColor" viewBox="0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" /></svg>
 );
 
+// Logical Constants for Coordinate Mapping
 const LOGICAL_WIDTH = 10;
-const LOGICAL_HEIGHT = 15.0; 
-const TRAY_Y_START = 11.5;
+const LOGICAL_BOARD_HEIGHT = 10;
+const LOGICAL_TRAY_OFFSET = 10.5; // Gap between board and tray
+const LOGICAL_TRAY_HEIGHT = 3;
+const LOGICAL_TOTAL_HEIGHT = 14; // Board(10) + Gap(1) + Tray(3)
 
 const App: React.FC = () => {
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [hasSession, setHasSession] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [dragOffset, setDragOffset] = useState<Point>({ x: 0, y: 0 });
   const scoreEffectsRef = useRef<ScoreEffect[]>([]);
@@ -51,8 +55,11 @@ const App: React.FC = () => {
   const getScaleInfo = useCallback(() => {
     if (!canvasRef.current) return { scale: 1, offsetX: 0, offsetY: 0 };
     const rect = canvasRef.current.getBoundingClientRect();
-    const scale = rect.width / LOGICAL_WIDTH;
-    return { scale, offsetX: 0, offsetY: 0 };
+    // Scale is determined by the minimum of width/height constraints to ensure full visibility
+    const scale = Math.min(rect.width / LOGICAL_WIDTH, rect.height / LOGICAL_TOTAL_HEIGHT);
+    const offsetX = (rect.width - (LOGICAL_WIDTH * scale)) / 2;
+    const offsetY = (rect.height - (LOGICAL_TOTAL_HEIGHT * scale)) / 2;
+    return { scale, offsetX, offsetY };
   }, []);
 
   useEffect(() => {
@@ -88,15 +95,9 @@ const App: React.FC = () => {
     const startX = index * sectionWidth;
     return {
       x: startX + (sectionWidth - piece.shape[0].length) / 2,
-      y: TRAY_Y_START + (3.0 - piece.shape.length) / 2
+      y: LOGICAL_TRAY_OFFSET + (LOGICAL_TRAY_HEIGHT - piece.shape.length) / 2
     };
   }, []);
-
-  const checkGameOver = (state: GameState): boolean => {
-    const remainingPieces = state.trayPieces.filter(p => p !== null);
-    if (remainingPieces.length === 0) return false;
-    return !remainingPieces.some(p => canPlaceAnywhere(state.grid, p!));
-  };
 
   const startNewGame = useCallback(() => {
     const saved = loadGameData();
@@ -142,6 +143,7 @@ const App: React.FC = () => {
     if (snapY < 0 || snapY > GRID_SIZE - currentPiece.shape.length || 
         snapX < 0 || snapX > GRID_SIZE - currentPiece.shape[0].length || 
         checkCollision(grid, currentPiece, { x: snapX, y: snapY })) {
+      // Return to tray if placement invalid
       setGameState({ 
         ...gameState, 
         currentPiecePos: getTrayPiecePos(activePieceIndex, currentPiece),
@@ -192,13 +194,8 @@ const App: React.FC = () => {
     });
 
     const linesCleared = rowsToRemove.length + colsToRemove.length;
-    let addedScore = 0;
-    if (linesCleared > 0) {
-      addedScore = (linesCleared * linesCleared) * 100;
-      if (combo > 0) addedScore *= 2;
-    } else {
-      addedScore = 10;
-    }
+    let addedScore = linesCleared > 0 ? (linesCleared * linesCleared) * 100 : 10;
+    if (combo > 0 && linesCleared > 0) addedScore *= 2;
     
     const newScore = score + addedScore;
     const newCombo = linesCleared > 0 ? combo + 1 : 0;
@@ -244,18 +241,21 @@ const App: React.FC = () => {
            return s;
          });
       }, 2000);
-    } else if (checkGameOver(nextState)) {
-      let finalHighScore = highScore;
-      if (newScore > highScore) {
-        finalHighScore = newScore;
-        saveGameData({ highScore: finalHighScore });
-      }
-      setGameState({ ...nextState, highScore: finalHighScore, isGameOver: true });
-      clearSession();
-      setHasSession(false);
     } else {
-      setGameState(nextState);
-      saveSession(nextState);
+      const remainingPieces = finalTray.filter(p => p !== null);
+      if (remainingPieces.length > 0 && !remainingPieces.some(p => canPlaceAnywhere(newGrid, p!))) {
+        let finalHighScore = highScore;
+        if (newScore > highScore) {
+          finalHighScore = newScore;
+          saveGameData({ highScore: finalHighScore });
+        }
+        setGameState({ ...nextState, highScore: finalHighScore, isGameOver: true });
+        clearSession();
+        setHasSession(false);
+      } else {
+        setGameState(nextState);
+        saveSession(nextState);
+      }
     }
   };
 
@@ -266,26 +266,34 @@ const App: React.FC = () => {
     if (!ctx) return;
     const dpr = window.devicePixelRatio || 1;
     const rect = canvas.getBoundingClientRect();
-    const scale = rect.width / LOGICAL_WIDTH;
-    const targetCanvasHeight = LOGICAL_HEIGHT * scale;
+    const { scale, offsetX, offsetY } = getScaleInfo();
     
-    if (canvas.width !== rect.width * dpr || canvas.height !== targetCanvasHeight * dpr) {
+    if (canvas.width !== rect.width * dpr || canvas.height !== rect.height * dpr) {
         canvas.width = rect.width * dpr;
-        canvas.height = targetCanvasHeight * dpr;
+        canvas.height = rect.height * dpr;
     }
 
     ctx.save();
     ctx.scale(dpr, dpr);
-    ctx.clearRect(0, 0, rect.width, targetCanvasHeight);
-    ctx.fillStyle = '#f8fafc'; ctx.fillRect(0, 0, rect.width, GRID_SIZE * scale);
-    ctx.fillStyle = '#f1f5f9'; ctx.fillRect(0, TRAY_Y_START * scale, rect.width, 3.5 * scale);
+    ctx.clearRect(0, 0, rect.width, rect.height);
+    ctx.translate(offsetX, offsetY);
+
+    // Draw Board Background
+    ctx.fillStyle = '#f8fafc'; 
+    ctx.fillRect(0, 0, LOGICAL_WIDTH * scale, LOGICAL_BOARD_HEIGHT * scale);
     
+    // Draw Grid Lines
     ctx.strokeStyle = '#e2e8f0'; ctx.lineWidth = 1;
     for(let i=0; i<=GRID_SIZE; i++) {
-        ctx.beginPath(); ctx.moveTo(i * scale, 0); ctx.lineTo(i * scale, GRID_SIZE * scale); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(0, i * scale); ctx.lineTo(GRID_SIZE * scale, i * scale); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(i * scale, 0); ctx.lineTo(i * scale, LOGICAL_BOARD_HEIGHT * scale); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(0, i * scale); ctx.lineTo(LOGICAL_WIDTH * scale, i * scale); ctx.stroke();
     }
 
+    // Draw Tray Background
+    ctx.fillStyle = '#f1f5f9';
+    ctx.fillRect(0, LOGICAL_TRAY_OFFSET * scale, LOGICAL_WIDTH * scale, LOGICAL_TRAY_HEIGHT * scale);
+
+    // Draw Grid Cells
     for (let y = 0; y < GRID_SIZE; y++) {
       for (let x = 0; x < GRID_SIZE; x++) {
         const cell = gameState.grid[y][x];
@@ -296,15 +304,20 @@ const App: React.FC = () => {
         if (cell.char) {
           const ok = cell.collected || gameState.isRoundClearing;
           if (ok) {
-            ctx.fillStyle = '#0ea5e9'; ctx.font = `bold ${Math.max(12, scale * 0.58)}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.fillStyle = '#0ea5e9'; 
+            ctx.font = `bold ${Math.max(12, scale * 0.55)}px sans-serif`; 
+            ctx.textAlign = 'center'; 
+            ctx.textBaseline = 'middle';
             ctx.fillText(cell.char, (x + 0.5) * scale, (y + 0.5) * scale);
           } else {
-            ctx.fillStyle = '#e2e8f0'; ctx.beginPath(); ctx.arc((x + 0.5) * scale, (y + 0.5) * scale, scale * 0.1, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#e2e8f0'; 
+            ctx.beginPath(); ctx.arc((x + 0.5) * scale, (y + 0.5) * scale, scale * 0.1, 0, Math.PI * 2); ctx.fill();
           }
         }
       }
     }
 
+    // Draw Tray Pieces
     gameState.trayPieces.forEach((p, i) => {
       if (!p || gameState.activePieceIndex === i) return;
       const pos = getTrayPiecePos(i, p);
@@ -312,21 +325,27 @@ const App: React.FC = () => {
       p.shape.forEach((row, py) => row.forEach((v, px) => v && ctx.fillRect((pos.x + px) * scale + 2, (pos.y + py) * scale + 2, scale - 4, scale - 4)));
     });
 
+    // Draw Active Piece (Floating)
     if (gameState.activePieceIndex !== null) {
       const p = gameState.trayPieces[gameState.activePieceIndex]!;
       const pos = gameState.currentPiecePos;
       const snapX = Math.round(pos.x); const snapY = Math.round(pos.y);
+      
+      // Draw ghost snap position on grid
       if (snapY < GRID_SIZE && snapX >= 0 && snapX <= GRID_SIZE - p.shape[0].length && snapY >= 0 && snapY <= GRID_SIZE - p.shape.length) {
         ctx.globalAlpha = 0.25; ctx.fillStyle = p.color;
         p.shape.forEach((row, py) => row.forEach((v, px) => v && ctx.fillRect((snapX + px) * scale, (snapY + py) * scale, scale, scale)));
         ctx.globalAlpha = 1.0;
       }
-      ctx.shadowBlur = 15; ctx.shadowColor = 'rgba(14, 165, 233, 0.5)'; ctx.fillStyle = p.color;
+      
+      // Draw actual floating piece
+      ctx.shadowBlur = 10; ctx.shadowColor = 'rgba(0,0,0,0.2)'; ctx.fillStyle = p.color;
       p.shape.forEach((row, py) => row.forEach((v, px) => v && ctx.fillRect((pos.x + px) * scale + 1, (pos.y + py) * scale + 1, scale - 2, scale - 2)));
       ctx.strokeStyle = '#0ea5e9'; ctx.lineWidth = 2; ctx.shadowBlur = 0;
       p.shape.forEach((row, py) => row.forEach((v, px) => v && ctx.strokeRect((pos.x + px) * scale + 1, (pos.y + py) * scale + 1, scale - 2, scale - 2)));
     }
 
+    // Draw Score Effects
     scoreEffectsRef.current = scoreEffectsRef.current.filter(e => e.life > 0);
     scoreEffectsRef.current.forEach(e => {
         ctx.fillStyle = '#0ea5e9'; ctx.font = `bold ${scale * 0.4}px sans-serif`; ctx.globalAlpha = e.life; ctx.textAlign = 'center';
@@ -335,7 +354,7 @@ const App: React.FC = () => {
 
     ctx.restore();
     requestRef.current = requestAnimationFrame(animate);
-  }, [gameState, getTrayPiecePos]);
+  }, [gameState, getTrayPiecePos, getScaleInfo]);
 
   useEffect(() => {
     if (gameState?.screen === 'playing') requestRef.current = requestAnimationFrame(animate);
@@ -344,29 +363,27 @@ const App: React.FC = () => {
 
   const handlePointerDown = (e: React.PointerEvent) => {
     if (!gameState || gameState.screen !== 'playing' || gameState.isRoundClearing) return;
-    const { scale } = getScaleInfo();
+    const { scale, offsetX, offsetY } = getScaleInfo();
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return;
     
-    const x = (e.clientX - rect.left) / scale;
-    const y = (e.clientY - rect.top) / scale;
+    const x = (e.clientX - rect.left - offsetX) / scale;
+    const y = (e.clientY - rect.top - offsetY) / scale;
 
-    // 1. First Check: Re-picking active piece from grid
+    // Check 1: Re-picking active piece on grid
     if (gameState.activePieceIndex !== null) {
       const p = gameState.trayPieces[gameState.activePieceIndex]!;
       const pos = gameState.currentPiecePos;
-      // Define a small margin for easier picking
-      const margin = 0.3;
+      const margin = 0.5;
       if (x >= pos.x - margin && x <= pos.x + p.shape[0].length + margin && 
           y >= pos.y - margin && y <= pos.y + p.shape.length + margin) {
-        setIsDragging(true);
-        setDragOffset({ x: x - pos.x, y: y - pos.y });
+        setIsDragging(true); setDragOffset({ x: x - pos.x, y: y - pos.y });
         try { (e.target as HTMLElement).setPointerCapture(e.pointerId); } catch(err){}
         return;
       }
     }
 
-    // 2. Second Check: Picking a piece from tray
+    // Check 2: Picking from tray
     let trayIdx: number | null = null;
     gameState.trayPieces.forEach((p, i) => {
       if (!p) return;
@@ -384,12 +401,11 @@ const App: React.FC = () => {
 
   const handlePointerMove = (e: React.PointerEvent) => {
     if (!isDragging || !gameState || gameState.activePieceIndex === null) return;
-    const { scale } = getScaleInfo();
+    const { scale, offsetX, offsetY } = getScaleInfo();
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return;
-    
-    const x = (e.clientX - rect.left) / scale;
-    const y = (e.clientY - rect.top) / scale;
+    const x = (e.clientX - rect.left - offsetX) / scale;
+    const y = (e.clientY - rect.top - offsetY) / scale;
     setGameState({ ...gameState, currentPiecePos: { x: x - dragOffset.x, y: y - dragOffset.y } });
   };
 
@@ -399,33 +415,32 @@ const App: React.FC = () => {
     const p = gameState.trayPieces[gameState.activePieceIndex!];
     if (!p) return;
     const pos = gameState.currentPiecePos;
+    // Snap to grid if it's over the board, otherwise keep current floating position for re-dragging
     if (pos.y < GRID_SIZE - 0.2) {
       setGameState({ ...gameState, currentPiecePos: { x: Math.round(pos.x), y: Math.round(pos.y) } });
-    } else {
-      setGameState({ ...gameState, currentPiecePos: getTrayPiecePos(gameState.activePieceIndex!, p) });
     }
   };
 
-  if (!gameState) return <div className="fixed inset-0 bg-slate-900 flex items-center justify-center text-white text-xl font-bold">載入中...</div>;
+  if (!gameState) return <div className="fixed inset-0 bg-white flex items-center justify-center text-sky-500 text-xl font-bold">載入中...</div>;
 
   if (gameState.screen === 'menu') {
     return (
-      <div className="min-h-screen bg-white flex flex-col items-center justify-center p-8 space-y-12">
+      <div className="flex-1 bg-white flex flex-col items-center justify-center p-8 space-y-8 overflow-y-auto">
         <button onClick={() => { 
           const nextLang: Language = gameState.language === 'en' ? 'zh' : 'en';
           localStorage.setItem('lang', nextLang);
           setGameState({...gameState, language: nextLang});
         }} className="absolute top-4 right-4 text-[10px] font-black text-sky-500 border-2 border-sky-500 px-3 py-1 rounded-full uppercase">{gameState.language === 'en' ? '中文' : 'English'}</button>
         <div className="text-center">
-            <h1 className="text-5xl font-black text-sky-500 italic tracking-tighter uppercase mb-2 leading-none">{t.menu_title}</h1>
+            <h1 className="text-5xl font-black text-sky-500 italic tracking-tighter uppercase mb-2 leading-none">聖經方塊</h1>
             <p className="text-slate-300 font-bold uppercase tracking-widest text-[10px]">{t.menu_subtitle}</p>
         </div>
-        <div className="bg-slate-50 p-8 rounded-[3rem] w-full max-w-xs text-center border-2 border-slate-100">
+        <div className="bg-slate-50 p-6 rounded-[3rem] w-full max-w-xs text-center border-2 border-slate-100">
             <span className="text-[10px] font-black text-slate-300 uppercase tracking-widest mb-1 block">{t.menu_record}</span>
             <span className="text-5xl font-black text-slate-400 leading-none">{gameState.highScore}</span>
         </div>
         <div className="flex flex-col w-full max-w-xs space-y-4">
-            {hasSession && <button onClick={() => { const s = loadSession(); if(s) setGameState({...s, screen: 'playing'}); }} className="w-full bg-sky-50 text-sky-600 py-5 rounded-3xl font-black text-lg flex items-center justify-center gap-3 active:scale-95 border border-sky-100"><PlayIcon /> {t.btn_continue}</button>}
+            {hasSession && <button onClick={() => { const s = loadSession(); if(s) setGameState({...s, screen: 'playing'}); }} className="w-full bg-sky-50 text-sky-600 py-4 rounded-3xl font-black text-lg flex items-center justify-center gap-3 active:scale-95 border border-sky-100"><PlayIcon /> {t.btn_continue}</button>}
             <button onClick={startNewGame} className="w-full bg-sky-500 text-white py-5 rounded-3xl font-black text-lg shadow-xl border-b-4 border-sky-700 active:translate-y-1 active:border-b-0 uppercase tracking-widest">{t.btn_new_game}</button>
         </div>
       </div>
@@ -435,61 +450,63 @@ const App: React.FC = () => {
   const currentVerse = SAMPLE_VERSES[gameState.currentVerseIndex];
 
   return (
-    <div className="min-h-screen flex flex-col bg-white text-slate-800 relative">
-      <header className="flex-none bg-white flex justify-between items-center px-4 py-2 border-b border-slate-200 sticky top-0 z-40">
-        <div className="flex flex-col"><span className="text-[8px] font-black text-slate-300 uppercase leading-none mb-1">{t.hud_high}</span><span className="text-xs font-black text-slate-400 leading-none">{gameState.highScore}</span></div>
-        <div className="flex-1 flex flex-col items-center"><span className="text-[9px] font-black text-sky-500 uppercase leading-none mb-1">COMBO x{gameState.combo}</span><div className="text-[10px] font-black text-white bg-sky-500 px-3 py-0.5 rounded-full shadow-sm">{gameState.collectedIndices.size} / {currentVerse.text.length}</div></div>
-        <div className="flex flex-col text-right"><span className="text-[8px] font-black text-slate-300 uppercase leading-none mb-1">{t.hud_score}</span><span className="text-xs font-black text-sky-500 leading-none">{gameState.score}</span></div>
+    <div className="flex-1 flex flex-col h-full bg-white relative overflow-hidden">
+      {/* Header: 10dvh */}
+      <header className="h-[10dvh] flex-none bg-white flex justify-between items-center px-4 border-b border-slate-100">
+        <div className="flex flex-col"><span className="text-[8px] font-black text-slate-300 uppercase leading-none">{t.hud_high}</span><span className="text-xs font-black text-slate-400 leading-none">{gameState.highScore}</span></div>
+        <div className="flex-1 flex flex-col items-center"><span className="text-[9px] font-black text-sky-500 uppercase leading-none">COMBO x{gameState.combo}</span><div className="text-[10px] font-black text-white bg-sky-500 px-3 py-0.5 rounded-full shadow-sm">{gameState.collectedIndices.size}/{currentVerse.text.length}</div></div>
+        <div className="flex flex-col text-right"><span className="text-[8px] font-black text-slate-300 uppercase leading-none">{t.hud_score}</span><span className="text-xs font-black text-sky-500 leading-none">{gameState.score}</span></div>
       </header>
       
-      <main className="flex-none w-full bg-slate-100 relative">
+      {/* Interaction Area (Board + Tray): 50dvh + 15dvh = 65dvh */}
+      <main className="h-[65dvh] flex-none bg-slate-50 relative flex items-center justify-center overflow-hidden">
         <canvas 
           ref={canvasRef} 
           onPointerDown={handlePointerDown} 
           onPointerMove={handlePointerMove} 
           onPointerUp={handlePointerUp} 
-          className="w-full block touch-none"
-          style={{ height: 'auto', aspectRatio: '10/15' }}
+          className="w-full h-full block touch-none"
         />
         {gameState.isRoundClearing && (
-          <div className="absolute inset-0 z-30 bg-sky-500/10 backdrop-blur-md flex items-center justify-center">
-            <div className="bg-white px-8 py-4 rounded-[2.5rem] shadow-2xl border-4 border-sky-500 animate-bounce text-xl font-black text-sky-500 uppercase italic">
+          <div className="absolute inset-0 z-30 bg-sky-500/10 backdrop-blur-sm flex items-center justify-center">
+            <div className="bg-white px-8 py-4 rounded-[2rem] shadow-2xl border-4 border-sky-500 animate-bounce text-xl font-black text-sky-500 uppercase italic">
               {t.victory_title}
             </div>
           </div>
         )}
       </main>
 
-      <section className="flex-none px-6 py-3 bg-white border-y border-slate-100 min-h-[80px] flex flex-col items-center justify-center">
-         <div className="flex flex-wrap justify-center gap-1 max-w-md">
+      {/* Verse Area: 15dvh */}
+      <section className="h-[15dvh] flex-none px-6 bg-white flex flex-col items-center justify-center overflow-hidden border-t border-slate-50">
+         <div className="flex flex-wrap justify-center gap-1 max-w-md overflow-y-auto">
             {currentVerse.text.split('').map((char, i) => { 
                 const ok = gameState.collectedIndices.has(i) || gameState.isRoundClearing; 
-                return <span key={i} className={`text-[16px] sm:text-[18px] font-black transition-all duration-700 ${ok ? 'text-sky-500 scale-105' : 'text-slate-100'}`}>{ok ? char : '□'}</span>; 
+                return <span key={i} className={`text-[15px] sm:text-[18px] font-black transition-all duration-500 ${ok ? 'text-sky-500 scale-105' : 'text-slate-100'}`}>{ok ? char : '□'}</span>; 
             })}
          </div>
-         <p className="text-[8px] font-bold text-slate-300 italic mt-1">— {currentVerse.reference}</p>
+         <p className="text-[8px] font-bold text-slate-300 italic mt-1 line-clamp-1">— {currentVerse.reference}</p>
       </section>
 
-      <footer className="flex-none bg-white px-4 pt-3 pb-8 border-t border-slate-200">
-        <div className="grid grid-cols-4 gap-2 max-w-lg mx-auto">
-          <button onClick={() => { if(gameState.activePieceIndex!==null) { const p = gameState.trayPieces[gameState.activePieceIndex]!; const r = rotatePiece(p); const newTray = [...gameState.trayPieces]; newTray[gameState.activePieceIndex] = r; setGameState({...gameState, trayPieces: newTray}); } }} className="bg-slate-50 text-slate-500 p-2 rounded-[1.5rem] border border-slate-200 flex flex-col items-center justify-center active:scale-95"><RotateIcon /><span className="text-[7px] font-black uppercase mt-1">{t.btn_rotate}</span></button>
-          <button onClick={placePiece} className="col-span-2 bg-sky-500 text-white p-2 rounded-[1.5rem] shadow-md border-b-2 border-sky-700 active:translate-y-0.5 active:border-b-0 flex flex-col items-center justify-center"><PlaceIcon /><span className="text-[9px] font-black uppercase mt-1">{t.btn_confirm}</span></button>
-          <button onClick={() => { saveSession(gameState); setGameState({...gameState, screen: 'menu'}); }} className="bg-slate-50 text-slate-500 p-2 rounded-[1.5rem] border border-slate-200 flex flex-col items-center justify-center active:scale-95"><MenuIcon /><span className="text-[7px] font-black uppercase mt-1">{t.btn_home}</span></button>
+      {/* Footer / Buttons: 10dvh */}
+      <footer className="h-[10dvh] flex-none bg-white px-4 flex items-center border-t border-slate-100">
+        <div className="grid grid-cols-4 gap-2 w-full max-w-lg mx-auto">
+          <button onClick={() => { if(gameState.activePieceIndex!==null) { const p = gameState.trayPieces[gameState.activePieceIndex]!; const r = rotatePiece(p); const newTray = [...gameState.trayPieces]; newTray[gameState.activePieceIndex] = r; setGameState({...gameState, trayPieces: newTray}); } }} className="h-10 bg-slate-50 text-slate-500 rounded-2xl border border-slate-200 flex flex-col items-center justify-center active:scale-95"><RotateIcon /><span className="text-[6px] font-black uppercase">{t.btn_rotate}</span></button>
+          <button onClick={placePiece} className="h-12 col-span-2 bg-sky-500 text-white rounded-2xl shadow-md border-b-4 border-sky-700 active:translate-y-0.5 active:border-b-0 flex flex-col items-center justify-center"><PlaceIcon /><span className="text-[8px] font-black uppercase">{t.btn_confirm}</span></button>
+          <button onClick={() => { saveSession(gameState); setGameState({...gameState, screen: 'menu'}); }} className="h-10 bg-slate-50 text-slate-500 rounded-2xl border border-slate-200 flex flex-col items-center justify-center active:scale-95"><MenuIcon /><span className="text-[6px] font-black uppercase">{t.btn_home}</span></button>
         </div>
       </footer>
 
       {gameState.isGameOver && (
-        <div className="fixed inset-0 z-50 bg-slate-900/90 backdrop-blur-xl flex items-center justify-center p-6">
-           <div className="bg-white w-full max-w-xs rounded-[3.5rem] p-8 text-center shadow-2xl border-2 border-white/50">
-              <h2 className="text-2xl font-black text-sky-500 mb-1 italic uppercase leading-none">{t.game_over_title}</h2>
+        <div className="fixed inset-0 z-50 bg-slate-900/90 backdrop-blur-md flex items-center justify-center p-6">
+           <div className="bg-white w-full max-w-xs rounded-[3rem] p-8 text-center shadow-2xl">
+              <h2 className="text-2xl font-black text-sky-500 mb-1 italic uppercase">{t.game_over_title}</h2>
               <div className="my-6">
                 <p className="text-slate-300 text-[9px] font-black uppercase mb-1">{t.game_over_final_score}</p>
                 <p className="text-5xl font-black text-slate-800 tracking-tighter">{gameState.score}</p>
-                {gameState.score >= gameState.highScore && <p className="text-sky-500 font-black text-[8px] mt-1 uppercase animate-pulse">{t.game_over_new_record}</p>}
               </div>
               <div className="space-y-2">
-                <button onClick={startNewGame} className="w-full bg-sky-500 text-white py-4 rounded-[1.5rem] font-black text-base shadow-lg border-b-2 border-sky-700 active:scale-95 uppercase">{t.btn_try_again}</button>
-                <button onClick={() => { setGameState({...gameState, screen:'menu', isGameOver:false}); setHasSession(false); }} className="w-full bg-slate-100 text-slate-500 py-3 rounded-[1.5rem] font-black text-[10px] uppercase">{t.btn_main_menu}</button>
+                <button onClick={startNewGame} className="w-full bg-sky-500 text-white py-4 rounded-[1.5rem] font-black text-base shadow-lg active:scale-95 uppercase tracking-widest">{t.btn_try_again}</button>
+                <button onClick={() => { setGameState({...gameState, screen:'menu', isGameOver:false}); setHasSession(false); }} className="w-full bg-slate-100 text-slate-400 py-3 rounded-[1.5rem] font-black text-[10px] uppercase">{t.btn_main_menu}</button>
               </div>
            </div>
         </div>
