@@ -10,16 +10,21 @@
         body {
             margin: 0;
             padding: 0;
-            overflow: hidden;
-            background-color: #0f172a; /* 這是你看到的藍底，現在確保它會載入 JS */
+            overflow-x: hidden;
+            overflow-y: auto; /* 允許垂直捲動 */
+            background-color: #ffffff;
             -webkit-touch-callout: none;
             -webkit-user-select: none;
             user-select: none;
-            touch-action: none;
         }
         #root {
-            height: 100vh;
+            min-height: 100vh;
             width: 100vw;
+        }
+        /* 隱藏捲動條但保留功能 (可選，視審美決定) */
+        ::-webkit-scrollbar {
+            width: 0px;
+            background: transparent;
         }
     </style>
     <script type="importmap">
@@ -36,8 +41,6 @@
 </head>
 <body>
     <div id="root"></div>
-    <!-- 必須加入此行才能在網頁上執行，
-         但在 Vercel 部署時，你需要確保你的 package.json 中有 Vite 指令將 tsx 轉成 js -->
     <script type="module" src="./index.tsx"></script>
 </body>
 </html>
