@@ -32,35 +32,24 @@ const MenuIcon = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M4 6h16M4 12h16m-7 6h7" /></svg>
 );
 const PlayIcon = () => (
-  <svg className="w-8 h-8" fill="currentColor" viewBox="0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" /></svg>
+  <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" /></svg>
 );
 
-// Logical Constants for Coordinate Mapping
-const LOGICAL_WIDTH = 10;
-const LOGICAL_BOARD_HEIGHT = 10;
-const LOGICAL_TRAY_OFFSET = 10.5; // Gap between board and tray
-const LOGICAL_TRAY_HEIGHT = 3;
-const LOGICAL_TOTAL_HEIGHT = 14; // Board(10) + Gap(1) + Tray(3)
+// Unified Logical Dimensions
+const LOGICAL_W = 10;
+const LOGICAL_BOARD_H = 10;
+const TRAY_GAP = 0.5;
+const LOGICAL_TRAY_H = 2.5;
+const TOTAL_LOGICAL_H = LOGICAL_BOARD_H + TRAY_GAP + LOGICAL_TRAY_H;
 
 const App: React.FC = () => {
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [hasSession, setHasSession] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [dragOffset, setDragOffset] = useState<Point>({ x: 0, y: 0 });
   const scoreEffectsRef = useRef<ScoreEffect[]>([]);
   const requestRef = useRef<number>(0);
-
-  const getScaleInfo = useCallback(() => {
-    if (!canvasRef.current) return { scale: 1, offsetX: 0, offsetY: 0 };
-    const rect = canvasRef.current.getBoundingClientRect();
-    // Scale is determined by the minimum of width/height constraints to ensure full visibility
-    const scale = Math.min(rect.width / LOGICAL_WIDTH, rect.height / LOGICAL_TOTAL_HEIGHT);
-    const offsetX = (rect.width - (LOGICAL_WIDTH * scale)) / 2;
-    const offsetY = (rect.height - (LOGICAL_TOTAL_HEIGHT * scale)) / 2;
-    return { scale, offsetX, offsetY };
-  }, []);
 
   useEffect(() => {
     try {
@@ -91,12 +80,20 @@ const App: React.FC = () => {
   const t = getTranslation(gameState?.language || 'zh');
 
   const getTrayPiecePos = useCallback((index: number, piece: Piece): Point => {
-    const sectionWidth = LOGICAL_WIDTH / 3;
-    const startX = index * sectionWidth;
+    const sectionWidth = LOGICAL_W / 3;
     return {
-      x: startX + (sectionWidth - piece.shape[0].length) / 2,
-      y: LOGICAL_TRAY_OFFSET + (LOGICAL_TRAY_HEIGHT - piece.shape.length) / 2
+      x: (index * sectionWidth) + (sectionWidth - piece.shape[0].length) / 2,
+      y: LOGICAL_BOARD_H + TRAY_GAP + (LOGICAL_TRAY_H - piece.shape.length) / 2
     };
+  }, []);
+
+  const getScaleInfo = useCallback(() => {
+    if (!canvasRef.current) return { scale: 1, offsetX: 0, offsetY: 0 };
+    const rect = canvasRef.current.getBoundingClientRect();
+    const scale = Math.min(rect.width / LOGICAL_W, rect.height / TOTAL_LOGICAL_H);
+    const offsetX = (rect.width - (LOGICAL_W * scale)) / 2;
+    const offsetY = (rect.height - (TOTAL_LOGICAL_H * scale)) / 2;
+    return { scale, offsetX, offsetY };
   }, []);
 
   const startNewGame = useCallback(() => {
@@ -131,6 +128,26 @@ const App: React.FC = () => {
     scoreEffectsRef.current = [];
   }, []);
 
+  const advanceToNextVerse = () => {
+    if (!gameState || !gameState.isRoundClearing) return;
+    setGameState(prev => {
+      if (!prev) return null;
+      const verseIdx = Math.floor(Math.random() * SAMPLE_VERSES.length);
+      const verse = SAMPLE_VERSES[verseIdx];
+      const updatedGrid = prev.grid.map(row => row.map(cell => ({ ...cell })));
+      distributeVerse(updatedGrid, verse.text);
+      const s: GameState = { 
+        ...prev, 
+        currentVerseIndex: verseIdx, 
+        grid: updatedGrid, 
+        collectedIndices: new Set<number>(), 
+        isRoundClearing: false 
+      };
+      saveSession(s);
+      return s;
+    });
+  };
+
   const placePiece = () => {
     if (!gameState || isDragging || gameState.isRoundClearing || gameState.activePieceIndex === null) return;
     const { trayPieces, activePieceIndex, currentPiecePos, grid, score, combo, collectedIndices, currentVerseIndex, highScore } = gameState;
@@ -143,12 +160,7 @@ const App: React.FC = () => {
     if (snapY < 0 || snapY > GRID_SIZE - currentPiece.shape.length || 
         snapX < 0 || snapX > GRID_SIZE - currentPiece.shape[0].length || 
         checkCollision(grid, currentPiece, { x: snapX, y: snapY })) {
-      // Return to tray if placement invalid
-      setGameState({ 
-        ...gameState, 
-        currentPiecePos: getTrayPiecePos(activePieceIndex, currentPiece),
-        activePieceIndex: null 
-      });
+      setGameState({ ...gameState, activePieceIndex: null });
       return;
     }
 
@@ -194,18 +206,23 @@ const App: React.FC = () => {
     });
 
     const linesCleared = rowsToRemove.length + colsToRemove.length;
-    let addedScore = linesCleared > 0 ? (linesCleared * linesCleared) * 100 : 10;
-    if (combo > 0 && linesCleared > 0) addedScore *= 2;
+    const newCombo = linesCleared > 0 ? combo + 1 : 0;
+    let addedScore = 0;
+    if (linesCleared > 0) {
+      const multiplier = Math.min(newCombo, 10);
+      addedScore = (linesCleared * linesCleared * 100) * multiplier;
+    } else {
+      addedScore = 10;
+    }
     
     const newScore = score + addedScore;
-    const newCombo = linesCleared > 0 ? combo + 1 : 0;
     
     if (linesCleared > 0) {
       scoreEffectsRef.current.push({
         id: Date.now(),
         x: snapX + currentPiece.shape[0].length / 2,
         y: snapY + currentPiece.shape.length / 2,
-        text: `+${addedScore}${newCombo > 1 ? ` (COMBO x2!)` : ''}`,
+        text: `+${addedScore}${newCombo > 1 ? ` (x${newCombo})` : ''}`,
         life: 1.0
       });
     }
@@ -228,19 +245,8 @@ const App: React.FC = () => {
     };
 
     if (newCollectedIndices.size >= currentVerseText.length) {
+      // SUCCESS! Wait for user click to continue
       setGameState({ ...nextState, isRoundClearing: true });
-      setTimeout(() => {
-         setGameState(prev => {
-           if (!prev) return null;
-           const verseIdx = Math.floor(Math.random() * SAMPLE_VERSES.length);
-           const verse = SAMPLE_VERSES[verseIdx];
-           const updatedGrid = prev.grid.map(row => row.map(cell => ({ ...cell })));
-           distributeVerse(updatedGrid, verse.text);
-           const s: GameState = { ...prev, currentVerseIndex: verseIdx, grid: updatedGrid, collectedIndices: new Set<number>(), isRoundClearing: false };
-           saveSession(s);
-           return s;
-         });
-      }, 2000);
     } else {
       const remainingPieces = finalTray.filter(p => p !== null);
       if (remainingPieces.length > 0 && !remainingPieces.some(p => canPlaceAnywhere(newGrid, p!))) {
@@ -261,63 +267,44 @@ const App: React.FC = () => {
 
   const animate = useCallback(() => {
     if (!gameState || gameState.screen !== 'playing' || !canvasRef.current) return;
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    
     const dpr = window.devicePixelRatio || 1;
+    const canvas = canvasRef.current;
     const rect = canvas.getBoundingClientRect();
     const { scale, offsetX, offsetY } = getScaleInfo();
-    
+
     if (canvas.width !== rect.width * dpr || canvas.height !== rect.height * dpr) {
-        canvas.width = rect.width * dpr;
-        canvas.height = rect.height * dpr;
+      canvas.width = rect.width * dpr; canvas.height = rect.height * dpr;
     }
 
-    ctx.save();
-    ctx.scale(dpr, dpr);
-    ctx.clearRect(0, 0, rect.width, rect.height);
+    const ctx = canvas.getContext('2d')!;
+    ctx.save(); ctx.scale(dpr, dpr); ctx.clearRect(0, 0, rect.width, rect.height);
     ctx.translate(offsetX, offsetY);
-
-    // Draw Board Background
-    ctx.fillStyle = '#f8fafc'; 
-    ctx.fillRect(0, 0, LOGICAL_WIDTH * scale, LOGICAL_BOARD_HEIGHT * scale);
     
-    // Draw Grid Lines
+    ctx.fillStyle = '#f8fafc'; 
+    ctx.fillRect(0, 0, LOGICAL_W * scale, LOGICAL_BOARD_H * scale);
+    
     ctx.strokeStyle = '#e2e8f0'; ctx.lineWidth = 1;
     for(let i=0; i<=GRID_SIZE; i++) {
-        ctx.beginPath(); ctx.moveTo(i * scale, 0); ctx.lineTo(i * scale, LOGICAL_BOARD_HEIGHT * scale); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(0, i * scale); ctx.lineTo(LOGICAL_WIDTH * scale, i * scale); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(i * scale, 0); ctx.lineTo(i * scale, LOGICAL_BOARD_H * scale); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(0, i * scale); ctx.lineTo(LOGICAL_W * scale, i * scale); ctx.stroke();
     }
 
-    // Draw Tray Background
     ctx.fillStyle = '#f1f5f9';
-    ctx.fillRect(0, LOGICAL_TRAY_OFFSET * scale, LOGICAL_WIDTH * scale, LOGICAL_TRAY_HEIGHT * scale);
+    ctx.fillRect(0, (LOGICAL_BOARD_H + TRAY_GAP) * scale, LOGICAL_W * scale, LOGICAL_TRAY_H * scale);
 
-    // Draw Grid Cells
     for (let y = 0; y < GRID_SIZE; y++) {
       for (let x = 0; x < GRID_SIZE; x++) {
         const cell = gameState.grid[y][x];
-        if (cell.filled) {
-          ctx.fillStyle = cell.color || '#cbd5e1';
-          ctx.fillRect(x * scale + 1, y * scale + 1, scale - 2, scale - 2);
-        }
+        if (cell.filled) { ctx.fillStyle = cell.color || '#cbd5e1'; ctx.fillRect(x * scale + 1, y * scale + 1, scale - 2, scale - 2); }
         if (cell.char) {
           const ok = cell.collected || gameState.isRoundClearing;
-          if (ok) {
-            ctx.fillStyle = '#0ea5e9'; 
-            ctx.font = `bold ${Math.max(12, scale * 0.55)}px sans-serif`; 
-            ctx.textAlign = 'center'; 
-            ctx.textBaseline = 'middle';
-            ctx.fillText(cell.char, (x + 0.5) * scale, (y + 0.5) * scale);
-          } else {
-            ctx.fillStyle = '#e2e8f0'; 
-            ctx.beginPath(); ctx.arc((x + 0.5) * scale, (y + 0.5) * scale, scale * 0.1, 0, Math.PI * 2); ctx.fill();
-          }
+          if (ok) { ctx.fillStyle = '#0ea5e9'; ctx.font = `bold ${Math.max(12, scale * 0.55)}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(cell.char, (x + 0.5) * scale, (y + 0.5) * scale); }
+          else { ctx.fillStyle = '#e2e8f0'; ctx.beginPath(); ctx.arc((x + 0.5) * scale, (y + 0.5) * scale, scale * 0.1, 0, Math.PI * 2); ctx.fill(); }
         }
       }
     }
 
-    // Draw Tray Pieces
     gameState.trayPieces.forEach((p, i) => {
       if (!p || gameState.activePieceIndex === i) return;
       const pos = getTrayPiecePos(i, p);
@@ -325,33 +312,27 @@ const App: React.FC = () => {
       p.shape.forEach((row, py) => row.forEach((v, px) => v && ctx.fillRect((pos.x + px) * scale + 2, (pos.y + py) * scale + 2, scale - 4, scale - 4)));
     });
 
-    // Draw Active Piece (Floating)
     if (gameState.activePieceIndex !== null) {
       const p = gameState.trayPieces[gameState.activePieceIndex]!;
       const pos = gameState.currentPiecePos;
       const snapX = Math.round(pos.x); const snapY = Math.round(pos.y);
-      
-      // Draw ghost snap position on grid
       if (snapY < GRID_SIZE && snapX >= 0 && snapX <= GRID_SIZE - p.shape[0].length && snapY >= 0 && snapY <= GRID_SIZE - p.shape.length) {
         ctx.globalAlpha = 0.25; ctx.fillStyle = p.color;
         p.shape.forEach((row, py) => row.forEach((v, px) => v && ctx.fillRect((snapX + px) * scale, (snapY + py) * scale, scale, scale)));
         ctx.globalAlpha = 1.0;
       }
-      
-      // Draw actual floating piece
       ctx.shadowBlur = 10; ctx.shadowColor = 'rgba(0,0,0,0.2)'; ctx.fillStyle = p.color;
       p.shape.forEach((row, py) => row.forEach((v, px) => v && ctx.fillRect((pos.x + px) * scale + 1, (pos.y + py) * scale + 1, scale - 2, scale - 2)));
       ctx.strokeStyle = '#0ea5e9'; ctx.lineWidth = 2; ctx.shadowBlur = 0;
       p.shape.forEach((row, py) => row.forEach((v, px) => v && ctx.strokeRect((pos.x + px) * scale + 1, (pos.y + py) * scale + 1, scale - 2, scale - 2)));
     }
 
-    // Draw Score Effects
     scoreEffectsRef.current = scoreEffectsRef.current.filter(e => e.life > 0);
     scoreEffectsRef.current.forEach(e => {
         ctx.fillStyle = '#0ea5e9'; ctx.font = `bold ${scale * 0.4}px sans-serif`; ctx.globalAlpha = e.life; ctx.textAlign = 'center';
         ctx.fillText(e.text, e.x * scale, (e.y - (1 - e.life) * 2) * scale); e.life -= 0.02;
     });
-
+    
     ctx.restore();
     requestRef.current = requestAnimationFrame(animate);
   }, [gameState, getTrayPiecePos, getScaleInfo]);
@@ -367,34 +348,36 @@ const App: React.FC = () => {
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return;
     
-    const x = (e.clientX - rect.left - offsetX) / scale;
-    const y = (e.clientY - rect.top - offsetY) / scale;
+    const lx = (e.clientX - rect.left - offsetX) / scale;
+    const ly = (e.clientY - rect.top - offsetY) / scale;
 
-    // Check 1: Re-picking active piece on grid
     if (gameState.activePieceIndex !== null) {
       const p = gameState.trayPieces[gameState.activePieceIndex]!;
       const pos = gameState.currentPiecePos;
-      const margin = 0.5;
-      if (x >= pos.x - margin && x <= pos.x + p.shape[0].length + margin && 
-          y >= pos.y - margin && y <= pos.y + p.shape.length + margin) {
-        setIsDragging(true); setDragOffset({ x: x - pos.x, y: y - pos.y });
+      if (lx >= pos.x - 0.5 && lx <= pos.x + p.shape[0].length + 0.5 && 
+          ly >= pos.y - 0.5 && ly <= pos.y + p.shape.length + 0.5) {
+        setIsDragging(true); setDragOffset({ x: lx - pos.x, y: ly - pos.y });
         try { (e.target as HTMLElement).setPointerCapture(e.pointerId); } catch(err){}
         return;
       }
     }
 
-    // Check 2: Picking from tray
     let trayIdx: number | null = null;
     gameState.trayPieces.forEach((p, i) => {
       if (!p) return;
       const pos = getTrayPiecePos(i, p);
-      if (x >= pos.x - 0.3 && x <= pos.x + p.shape[0].length + 0.3 && y >= pos.y - 0.3 && y <= pos.y + p.shape.length + 0.3) trayIdx = i;
+      if (lx >= pos.x - 0.3 && lx <= pos.x + p.shape[0].length + 0.3 && 
+          ly >= pos.y - 0.3 && ly <= pos.y + p.shape.length + 0.3) {
+        trayIdx = i;
+      }
     });
 
     if (trayIdx !== null) {
-      const p = gameState.trayPieces[trayIdx]!; const pos = getTrayPiecePos(trayIdx, p);
-      setIsDragging(true); setDragOffset({ x: x - pos.x, y: y - pos.y });
-      setGameState({ ...gameState, activePieceIndex: trayIdx, currentPiecePos: pos });
+      const p = gameState.trayPieces[trayIdx]!;
+      const trayPos = getTrayPiecePos(trayIdx, p);
+      setIsDragging(true); 
+      setDragOffset({ x: lx - trayPos.x, y: ly - trayPos.y });
+      setGameState({ ...gameState, activePieceIndex: trayIdx, currentPiecePos: trayPos });
       try { (e.target as HTMLElement).setPointerCapture(e.pointerId); } catch(err){}
     }
   };
@@ -404,9 +387,9 @@ const App: React.FC = () => {
     const { scale, offsetX, offsetY } = getScaleInfo();
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return;
-    const x = (e.clientX - rect.left - offsetX) / scale;
-    const y = (e.clientY - rect.top - offsetY) / scale;
-    setGameState({ ...gameState, currentPiecePos: { x: x - dragOffset.x, y: y - dragOffset.y } });
+    const lx = (e.clientX - rect.left - offsetX) / scale;
+    const ly = (e.clientY - rect.top - offsetY) / scale;
+    setGameState({ ...gameState, currentPiecePos: { x: lx - dragOffset.x, y: ly - dragOffset.y } });
   };
 
   const handlePointerUp = () => {
@@ -415,8 +398,7 @@ const App: React.FC = () => {
     const p = gameState.trayPieces[gameState.activePieceIndex!];
     if (!p) return;
     const pos = gameState.currentPiecePos;
-    // Snap to grid if it's over the board, otherwise keep current floating position for re-dragging
-    if (pos.y < GRID_SIZE - 0.2) {
+    if (pos.y < GRID_SIZE - 0.5 && pos.x >= -0.5 && pos.x <= GRID_SIZE - p.shape[0].length + 0.5) {
       setGameState({ ...gameState, currentPiecePos: { x: Math.round(pos.x), y: Math.round(pos.y) } });
     }
   };
@@ -425,7 +407,7 @@ const App: React.FC = () => {
 
   if (gameState.screen === 'menu') {
     return (
-      <div className="flex-1 bg-white flex flex-col items-center justify-center p-8 space-y-8 overflow-y-auto">
+      <div className="flex-1 bg-white flex flex-col items-center justify-center p-8 space-y-8">
         <button onClick={() => { 
           const nextLang: Language = gameState.language === 'en' ? 'zh' : 'en';
           localStorage.setItem('lang', nextLang);
@@ -450,35 +432,34 @@ const App: React.FC = () => {
   const currentVerse = SAMPLE_VERSES[gameState.currentVerseIndex];
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-white relative overflow-hidden">
-      {/* Header: 10dvh */}
-      <header className="h-[10dvh] flex-none bg-white flex justify-between items-center px-4 border-b border-slate-100">
+    <div className="flex-1 flex flex-col h-[100dvh] bg-white overflow-hidden">
+      <header className="h-[10dvh] flex-none flex justify-between items-center px-4 border-b border-slate-100">
         <div className="flex flex-col"><span className="text-[8px] font-black text-slate-300 uppercase leading-none">{t.hud_high}</span><span className="text-xs font-black text-slate-400 leading-none">{gameState.highScore}</span></div>
         <div className="flex-1 flex flex-col items-center"><span className="text-[9px] font-black text-sky-500 uppercase leading-none">COMBO x{gameState.combo}</span><div className="text-[10px] font-black text-white bg-sky-500 px-3 py-0.5 rounded-full shadow-sm">{gameState.collectedIndices.size}/{currentVerse.text.length}</div></div>
         <div className="flex flex-col text-right"><span className="text-[8px] font-black text-slate-300 uppercase leading-none">{t.hud_score}</span><span className="text-xs font-black text-sky-500 leading-none">{gameState.score}</span></div>
       </header>
       
-      {/* Interaction Area (Board + Tray): 50dvh + 15dvh = 65dvh */}
-      <main className="h-[65dvh] flex-none bg-slate-50 relative flex items-center justify-center overflow-hidden">
-        <canvas 
-          ref={canvasRef} 
-          onPointerDown={handlePointerDown} 
-          onPointerMove={handlePointerMove} 
-          onPointerUp={handlePointerUp} 
-          className="w-full h-full block touch-none"
-        />
+      <main className="h-[65dvh] flex-none bg-slate-50 relative overflow-hidden">
+        <canvas ref={canvasRef} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} className="w-full h-full block touch-none" />
         {gameState.isRoundClearing && (
-          <div className="absolute inset-0 z-30 bg-sky-500/10 backdrop-blur-sm flex items-center justify-center">
-            <div className="bg-white px-8 py-4 rounded-[2rem] shadow-2xl border-4 border-sky-500 animate-bounce text-xl font-black text-sky-500 uppercase italic">
-              {t.victory_title}
+          <div 
+            onClick={advanceToNextVerse}
+            className="absolute inset-0 z-30 bg-sky-500/30 backdrop-blur-md flex flex-col items-center justify-center cursor-pointer active:scale-95 transition-all duration-300"
+          >
+            <div className="bg-white px-10 py-6 rounded-[3rem] shadow-2xl border-4 border-sky-500 flex flex-col items-center animate-bounce">
+              <span className="text-2xl font-black text-sky-500 uppercase italic mb-2">
+                {t.victory_title}
+              </span>
+              <span className="text-[10px] font-bold text-slate-400 animate-pulse uppercase tracking-widest">
+                {gameState.language === 'en' ? 'Tap to Continue' : '點擊繼續'}
+              </span>
             </div>
           </div>
         )}
       </main>
 
-      {/* Verse Area: 15dvh */}
-      <section className="h-[15dvh] flex-none px-6 bg-white flex flex-col items-center justify-center overflow-hidden border-t border-slate-50">
-         <div className="flex flex-wrap justify-center gap-1 max-w-md overflow-y-auto">
+      <section className="h-[15dvh] flex-none px-6 bg-white flex flex-col items-center justify-center overflow-hidden border-t border-slate-100">
+         <div className="flex flex-wrap justify-center gap-1 max-w-md overflow-y-auto max-h-full py-2">
             {currentVerse.text.split('').map((char, i) => { 
                 const ok = gameState.collectedIndices.has(i) || gameState.isRoundClearing; 
                 return <span key={i} className={`text-[15px] sm:text-[18px] font-black transition-all duration-500 ${ok ? 'text-sky-500 scale-105' : 'text-slate-100'}`}>{ok ? char : '□'}</span>; 
@@ -487,7 +468,6 @@ const App: React.FC = () => {
          <p className="text-[8px] font-bold text-slate-300 italic mt-1 line-clamp-1">— {currentVerse.reference}</p>
       </section>
 
-      {/* Footer / Buttons: 10dvh */}
       <footer className="h-[10dvh] flex-none bg-white px-4 flex items-center border-t border-slate-100">
         <div className="grid grid-cols-4 gap-2 w-full max-w-lg mx-auto">
           <button onClick={() => { if(gameState.activePieceIndex!==null) { const p = gameState.trayPieces[gameState.activePieceIndex]!; const r = rotatePiece(p); const newTray = [...gameState.trayPieces]; newTray[gameState.activePieceIndex] = r; setGameState({...gameState, trayPieces: newTray}); } }} className="h-10 bg-slate-50 text-slate-500 rounded-2xl border border-slate-200 flex flex-col items-center justify-center active:scale-95"><RotateIcon /><span className="text-[6px] font-black uppercase">{t.btn_rotate}</span></button>
@@ -499,10 +479,10 @@ const App: React.FC = () => {
       {gameState.isGameOver && (
         <div className="fixed inset-0 z-50 bg-slate-900/90 backdrop-blur-md flex items-center justify-center p-6">
            <div className="bg-white w-full max-w-xs rounded-[3rem] p-8 text-center shadow-2xl">
-              <h2 className="text-2xl font-black text-sky-500 mb-1 italic uppercase">{t.game_over_title}</h2>
+              <h2 className="text-2xl font-black text-sky-500 mb-1 italic uppercase leading-none">{t.game_over_title}</h2>
               <div className="my-6">
                 <p className="text-slate-300 text-[9px] font-black uppercase mb-1">{t.game_over_final_score}</p>
-                <p className="text-5xl font-black text-slate-800 tracking-tighter">{gameState.score}</p>
+                <p className="text-5xl font-black text-slate-800 tracking-tighter leading-none">{gameState.score}</p>
               </div>
               <div className="space-y-2">
                 <button onClick={startNewGame} className="w-full bg-sky-500 text-white py-4 rounded-[1.5rem] font-black text-base shadow-lg active:scale-95 uppercase tracking-widest">{t.btn_try_again}</button>
